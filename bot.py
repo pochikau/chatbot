@@ -87,6 +87,119 @@ INSTR_SETUP_KEYS = ("ios", "android", "macos", "windows")
 # Файлы инструкций (PDF и т.д.): те же ключи, что в /upload_instruction
 INSTRUCTION_FILE_KEYS = frozenset(INSTR_SETUP_KEYS) | {"reinstall", "renew"}
 
+# Админ-панель: callback_data с префиксом a: (укладывается в лимит 64 байта)
+ADMIN_TEXT_GROUPS = (
+    (
+        "🏠 Главный экран",
+        (
+            ("main_menu_text", "Приветствие и меню"),
+        ),
+    ),
+    (
+        "🔌 Не работает подключение",
+        (
+            ("help_connection_text", "Вводный текст раздела"),
+            ("update_menu_text", "Экран «Скачать приложение»"),
+            ("reinstall_text", "Текст «Добавить подписку заново»"),
+            ("renew_text", "Текст «Перевыпустить подписку»"),
+        ),
+    ),
+    (
+        "📲 Настройка на устройстве",
+        (
+            ("setup_help_text", "Выбор операционной системы"),
+            ("setup_title_ios", "Заголовок — iPhone"),
+            ("setup_title_android", "Заголовок — Android"),
+            ("setup_title_macos", "Заголовок — macOS"),
+            ("setup_title_windows", "Заголовок — Windows"),
+        ),
+    ),
+    (
+        "💳 Подписка",
+        (
+            ("subscription_help_text", "Текст раздела"),
+        ),
+    ),
+)
+
+ADMIN_URL_GROUPS = (
+    (
+        "📱 Ссылки на приложения",
+        (
+            ("url_store_iphone", "iPhone (App Store)"),
+            ("url_store_android", "Android (APK)"),
+            ("url_store_macos", "macOS"),
+            ("url_store_windows", "Windows"),
+        ),
+    ),
+    (
+        "📖 Ссылки на инструкции (страницы)",
+        (
+            ("url_reinstall", "Переустановка подписки"),
+            ("url_renew", "Перевыпуск ключа"),
+            ("url_setup_ios", "Настройка — iOS"),
+            ("url_setup_android", "Настройка — Android"),
+            ("url_setup_macos", "Настройка — macOS"),
+            ("url_setup_windows", "Настройка — Windows"),
+        ),
+    ),
+    (
+        "💳 Подписка и тикеты",
+        (
+            ("url_subscription_bot", "Бот подписки"),
+            ("url_subscription_how", "Как оформить подписку"),
+            ("url_balance", "Как пополнить баланс"),
+            ("url_ticket_reinstall", "После создания тикета — переустановка"),
+            ("url_ticket_renew", "После создания тикета — перевыпуск"),
+        ),
+    ),
+)
+
+ADMIN_FILE_ITEMS = (
+    ("ios", "📱 iPhone"),
+    ("android", "🤖 Android"),
+    ("macos", "🍎 macOS"),
+    ("windows", "🪟 Windows"),
+    ("reinstall", "📖 Переустановка подписки"),
+    ("renew", "📩 Перевыпуск подписки"),
+)
+
+
+def _admin_text_label(key: str) -> str:
+    for _, items in ADMIN_TEXT_GROUPS:
+        for k, lab in items:
+            if k == key:
+                return lab
+    return key
+
+
+def _admin_url_label(key: str) -> str:
+    for _, items in ADMIN_URL_GROUPS:
+        for k, lab in items:
+            if k == key:
+                return lab
+    return key
+
+
+def admin_panel_markup(is_super: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton("📝 Тексты экранов", callback_data="a:troot"),
+            InlineKeyboardButton("🔗 Ссылки (URL)", callback_data="a:uroot"),
+        ],
+        [InlineKeyboardButton("📎 Файлы инструкций", callback_data="a:froot")],
+    ]
+    if is_super:
+        rows.append([InlineKeyboardButton("👥 Администраторы", callback_data="a:aroot")])
+    rows.append([InlineKeyboardButton("◀️ К меню помощи", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(rows)
+
+
+def clear_admin_pending(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("awaiting_content_key", None)
+    context.user_data.pop("awaiting_url_key", None)
+    context.user_data.pop("awaiting_upload_instruction", None)
+
 
 def log_event(level, message, user_id=None, ticket_id=None):
     extra_info = ""
@@ -448,17 +561,23 @@ def update_ticket_status(ticket_id, status):
         return False
 
 
+def _main_menu_keyboard(user_id: int | None) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton("🔌 Не работает подключение", callback_data="help_connection")],
+        [InlineKeyboardButton("📲 Как настроить на устройстве", callback_data="help_setup")],
+        [InlineKeyboardButton("💳 Подписка и оплата", callback_data="help_subscription")],
+        [InlineKeyboardButton("💬 Написать в поддержку", callback_data="create_ticket")],
+    ]
+    if user_id is not None and is_admin_user(user_id):
+        rows.append([InlineKeyboardButton("🛠 Панель администратора", callback_data="a:panel")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, message_text=None):
     if not message_text:
         message_text = get_content("main_menu_text")
-    keyboard = InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("⚙️ Не работает подключение", callback_data="help_connection")],
-            [InlineKeyboardButton("📲 Как настроить подключение?", callback_data="help_setup")],
-            [InlineKeyboardButton("📩 Действия с подпиской", callback_data="help_subscription")],
-            [InlineKeyboardButton("👨‍💻 Ничего не помогло, позвать человеков", callback_data="create_ticket")],
-        ]
-    )
+    uid = update.effective_user.id if update.effective_user else None
+    keyboard = _main_menu_keyboard(uid)
     if update.callback_query:
         await update.callback_query.edit_message_text(message_text, reply_markup=keyboard)
     else:
@@ -985,6 +1104,21 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.message.text and update.message.text.startswith("/"):
         return
 
+    if context.user_data.get("awaiting_url_key"):
+        if not is_admin_user(user_id):
+            context.user_data.pop("awaiting_url_key", None)
+        else:
+            key = context.user_data.pop("awaiting_url_key")
+            url = (update.message.text or "").strip()
+            if url:
+                if set_content(key, url):
+                    await update.message.reply_text(f"✅ Ссылка обновлена: `{key}`", parse_mode="Markdown")
+                else:
+                    await update.message.reply_text("❌ Ошибка записи.")
+            else:
+                await update.message.reply_text("Пришлите непустой URL одним сообщением.")
+            return
+
     if context.user_data.get("awaiting_upload_instruction"):
         if not is_admin_user(user_id):
             context.user_data.pop("awaiting_upload_instruction", None)
@@ -1193,7 +1327,9 @@ async def cmd_admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = [
         "*Админ-команды* (в личке с ботом):",
-        "/admin\\_help — это сообщение",
+        "/admin — панель кнопками (то же, что кнопка в меню)",
+        "/admin\\_help — текстовая справка по командам",
+        "/otmena — отменить ввод текста/URL/файла",
         "/listcontent — ключи текстов и URL",
         "/getcontent \\<key\\>",
         "/setcontent \\<key\\> — затем одним сообщением пришлите новое значение",
@@ -1390,6 +1526,235 @@ async def cmd_listadmins(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ {e}")
 
 
+async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin_user(uid):
+        await update.message.reply_text("Нет доступа.")
+        return
+    await update.message.reply_text(
+        "🛠 *Панель администратора*\n\n"
+        "Изменяйте тексты, ссылки и файлы инструкций через кнопки ниже.",
+        reply_markup=admin_panel_markup(is_super_admin(uid)),
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_otmena(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin_user(update.effective_user.id):
+        await update.message.reply_text("Команда только для администраторов.")
+        return
+    clear_admin_pending(context)
+    await update.message.reply_text("Действие отменено. Откройте /admin или кнопку «Панель администратора» в меню.")
+
+
+async def _admin_render_file_detail(query, key: str) -> None:
+    fid = get_instruction_file(key)
+    status = (
+        "📎 Сейчас пользователям отправляется *загруженный файл*."
+        if fid
+        else "🔗 Сейчас используется *ссылка* (см. раздел «Ссылки» → инструкции)."
+    )
+    label = next((lab for k, lab in ADMIN_FILE_ITEMS if k == key), key)
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("⬆️ Загрузить или заменить файл", callback_data=f"a:fu:{key}")],
+            [InlineKeyboardButton("🗑 Убрать файл (только ссылка)", callback_data=f"a:fc:{key}")],
+            [InlineKeyboardButton("◀️ Назад к списку", callback_data="a:froot")],
+        ]
+    )
+    await query.edit_message_text(
+        f"📎 *Файл инструкции: {label}*\n\n{status}\n\n_Ключ: `{key}`_",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+
+async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = query.from_user.id
+    data = query.data
+    if not is_admin_user(uid):
+        await query.answer("Нет доступа", show_alert=True)
+        return
+
+    if data == "a:cx":
+        clear_admin_pending(context)
+        await query.answer()
+        await query.edit_message_text(
+            "Отменено.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🛠 Открыть панель", callback_data="a:panel")]]
+            ),
+        )
+        return
+
+    await query.answer()
+
+    if data == "a:panel":
+        await query.edit_message_text(
+            "🛠 *Панель администратора*\n\n"
+            "• *Тексты* — что видит пользователь на экранах\n"
+            "• *Ссылки* — куда ведут кнопки с URL\n"
+            "• *Файлы* — PDF/документ вместо ссылки для инструкций",
+            reply_markup=admin_panel_markup(is_super_admin(uid)),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data == "a:troot":
+        rows = [
+            [InlineKeyboardButton(title, callback_data=f"a:tg:{i}")]
+            for i, (title, _) in enumerate(ADMIN_TEXT_GROUPS)
+        ]
+        rows.append([InlineKeyboardButton("◀️ Назад", callback_data="a:panel")])
+        await query.edit_message_text(
+            "📝 *Тексты экранов*\n\nВыберите раздел:",
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data.startswith("a:tg:"):
+        idx = int(data.split(":")[2])
+        title, items = ADMIN_TEXT_GROUPS[idx]
+        rows = [[InlineKeyboardButton(lab, callback_data=f"a:tx:{k}")] for k, lab in items]
+        rows.append([InlineKeyboardButton("◀️ Назад", callback_data="a:troot")])
+        await query.edit_message_text(
+            f"📝 *{title}*\n\nЧто изменить?",
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data.startswith("a:tx:"):
+        key = data.split(":", 2)[2]
+        clear_admin_pending(context)
+        context.user_data["awaiting_content_key"] = key
+        label = _admin_text_label(key)
+        await context.bot.send_message(
+            chat_id=uid,
+            text=(
+                f"✏️ Пришлите *новый текст* для: «{label}»\n\n"
+                f"Ключ: `{key}`\n"
+                "Формат: *Markdown* (как в Telegram). Следующим сообщением — сам текст."
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="a:cx")]]
+            ),
+        )
+        return
+
+    if data == "a:uroot":
+        rows = [
+            [InlineKeyboardButton(title, callback_data=f"a:ug:{i}")]
+            for i, (title, _) in enumerate(ADMIN_URL_GROUPS)
+        ]
+        rows.append([InlineKeyboardButton("◀️ Назад", callback_data="a:panel")])
+        await query.edit_message_text(
+            "🔗 *Ссылки (URL)*\n\nВыберите группу:",
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data.startswith("a:ug:"):
+        idx = int(data.split(":")[2])
+        title, items = ADMIN_URL_GROUPS[idx]
+        rows = [[InlineKeyboardButton(lab, callback_data=f"a:ux:{k}")] for k, lab in items]
+        rows.append([InlineKeyboardButton("◀️ Назад", callback_data="a:uroot")])
+        await query.edit_message_text(
+            f"🔗 *{title}*\n\nВыберите ссылку:",
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data.startswith("a:ux:"):
+        key = data.split(":", 2)[2]
+        cur = get_content(key)
+        preview = (cur[:200] + "…") if len(cur) > 220 else cur
+        clear_admin_pending(context)
+        context.user_data["awaiting_url_key"] = key
+        label = _admin_url_label(key)
+        await context.bot.send_message(
+            chat_id=uid,
+            text=(
+                f"🔗 Пришлите новый URL для: «{label}»\n\n"
+                f"Ключ: {key}\n"
+                f"Сейчас:\n{preview}\n\n"
+                "Следующим сообщением отправьте полную ссылку (https://…)."
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="a:cx")]]
+            ),
+        )
+        return
+
+    if data == "a:froot":
+        rows = [[InlineKeyboardButton(lab, callback_data=f"a:fk:{k}")] for k, lab in ADMIN_FILE_ITEMS]
+        rows.append([InlineKeyboardButton("◀️ Назад", callback_data="a:panel")])
+        await query.edit_message_text(
+            "📎 *Файлы инструкций*\n\n"
+            "Если для пункта загружен файл, пользователь получит документ; иначе — откроется ссылка из раздела «Ссылки».",
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data.startswith("a:fk:"):
+        key = data.split(":", 2)[2]
+        if key not in INSTRUCTION_FILE_KEYS:
+            await query.edit_message_text("Неизвестный ключ.")
+            return
+        await _admin_render_file_detail(query, key)
+        return
+
+    if data.startswith("a:fu:"):
+        key = data.split(":", 2)[2]
+        if key not in INSTRUCTION_FILE_KEYS:
+            return
+        clear_admin_pending(context)
+        context.user_data["awaiting_upload_instruction"] = key
+        label = next((lab for k, lab in ADMIN_FILE_ITEMS if k == key), key)
+        await context.bot.send_message(
+            chat_id=uid,
+            text=(
+                f"⬆️ Пришлите *документ* (файл) для: {label}\n\n"
+                "Не фото в чат — именно «Файл» / документ. Заменит текущий PDF, если был."
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="a:cx")]]
+            ),
+        )
+        return
+
+    if data.startswith("a:fc:"):
+        key = data.split(":", 2)[2]
+        if key in INSTRUCTION_FILE_KEYS:
+            delete_instruction_file(key)
+            await _admin_render_file_detail(query, key)
+        return
+
+    if data == "a:aroot":
+        if not is_super_admin(uid):
+            await query.edit_message_text("Только для супер-админа.")
+            return
+        await query.edit_message_text(
+            "👥 *Администраторы*\n\n"
+            "• `/addadmin 123456789` — добавить по Telegram user id\n"
+            "• `/removeadmin 123456789` — убрать из базы\n"
+            "• `/listadmins` — список\n\n"
+            "Супер-админы задаются в `.env` (`SUPER_ADMIN_USER_IDS`).",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("◀️ Назад", callback_data="a:panel")]]
+            ),
+            parse_mode="Markdown",
+        )
+        return
+
+
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (
         update.message.chat.id != SUPPORT_GROUP_ID
@@ -1466,6 +1831,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
 
+    if data.startswith("a:"):
+        await handle_admin_callback(update, context)
+        return
+
     if data.startswith("open_file_"):
         key = data.replace("open_file_", "")
         fid = get_instruction_file(key)
@@ -1536,17 +1905,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing_ticket = get_user_open_ticket(user_id)
     if existing_ticket:
         ticket_id = existing_ticket[3]
+        t_rows = [
+            [InlineKeyboardButton("📋 Статус тикета", callback_data=f"status_{ticket_id}")],
+            [InlineKeyboardButton("🔒 Закрыть тикет", callback_data=f"close_confirm_{ticket_id}")],
+            [InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"comment_{ticket_id}")],
+            [InlineKeyboardButton("📖 Получить быструю помощь", callback_data="back_to_main")],
+        ]
+        if is_admin_user(user_id):
+            t_rows.append([InlineKeyboardButton("🛠 Панель администратора", callback_data="a:panel")])
         await update.message.reply_text(
             f"🟢 У вас есть активный тикет: {ticket_id}\n\n"
             f"Вы можете управлять им через меню ниже:",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton("📋 Статус тикета", callback_data=f"status_{ticket_id}")],
-                    [InlineKeyboardButton("🔒 Закрыть тикет", callback_data=f"close_confirm_{ticket_id}")],
-                    [InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"comment_{ticket_id}")],
-                    [InlineKeyboardButton("📖 Получить быструю помощь", callback_data="back_to_main")],
-                ]
-            ),
+            reply_markup=InlineKeyboardMarkup(t_rows),
         )
     else:
         await show_main_menu(update, context)
@@ -1574,6 +1944,8 @@ def main():
 
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("myid", cmd_myid))
+        application.add_handler(CommandHandler("admin", cmd_admin))
+        application.add_handler(CommandHandler("otmena", cmd_otmena))
         application.add_handler(CommandHandler("admin_help", cmd_admin_help))
         application.add_handler(CommandHandler("listcontent", cmd_listcontent))
         application.add_handler(CommandHandler("getcontent", cmd_getcontent))
