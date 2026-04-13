@@ -84,6 +84,8 @@ DEFAULT_URLS = {
 
 # Ключи файлов инструкций (загрузка админом); если file_id есть — отправляется документ, иначе URL
 INSTR_SETUP_KEYS = ("ios", "android", "macos", "windows")
+# Файлы инструкций (PDF и т.д.): те же ключи, что в /upload_instruction
+INSTRUCTION_FILE_KEYS = frozenset(INSTR_SETUP_KEYS) | {"reinstall", "renew"}
 
 
 def log_event(level, message, user_id=None, ticket_id=None):
@@ -206,6 +208,33 @@ def set_instruction_file(key: str, file_id: str) -> bool:
         return True
     except Exception as e:
         log_event("error", f"set_instruction_file {key}: {e}")
+        return False
+
+
+def delete_instruction_file(key: str) -> bool:
+    try:
+        c = _conn()
+        cur = c.cursor()
+        cur.execute("DELETE FROM instruction_files WHERE key = ?", (key,))
+        c.commit()
+        c.close()
+        return True
+    except Exception as e:
+        log_event("error", f"delete_instruction_file {key}: {e}")
+        return False
+
+
+def reset_content_key(key: str) -> bool:
+    """Удалить переопределение из БД — снова подставятся значения по умолчанию из кода."""
+    try:
+        c = _conn()
+        cur = c.cursor()
+        cur.execute("DELETE FROM bot_content WHERE key = ?", (key,))
+        c.commit()
+        c.close()
+        return True
+    except Exception as e:
+        log_event("error", f"reset_content_key {key}: {e}")
         return False
 
 
@@ -1170,6 +1199,8 @@ async def cmd_admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setcontent \\<key\\> — затем одним сообщением пришлите новое значение",
         "/seturl \\<key\\> \\<url\\> — установить URL",
         "/upload\\_instruction \\<key\\> — затем пришлите *документ*",
+        "/clear\\_instruction \\<key\\> — убрать загруженный файл, снова будет только ссылка",
+        "/resetcontent \\<key\\> — сбросить текст или URL к значению по умолчанию",
         "",
         "*Ключи файлов инструкций:* `ios`, `android`, `macos`, `windows`, `reinstall`, `renew`",
     ]
@@ -1246,12 +1277,56 @@ async def cmd_upload_instruction(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
     key = context.args[0].lower()
-    allowed = set(INSTR_SETUP_KEYS) | {"reinstall", "renew"}
-    if key not in allowed:
-        await update.message.reply_text(f"Неизвестный ключ. Допустимо: {', '.join(sorted(allowed))}")
+    if key not in INSTRUCTION_FILE_KEYS:
+        await update.message.reply_text(
+            f"Неизвестный ключ. Допустимо: {', '.join(sorted(INSTRUCTION_FILE_KEYS))}"
+        )
         return
     context.user_data["awaiting_upload_instruction"] = key
     await update.message.reply_text(f"Пришлите файл инструкции для `{key}` (как документ).", parse_mode="Markdown")
+
+
+async def cmd_clear_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin_user(update.effective_user.id):
+        await update.message.reply_text("Нет доступа.")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: /clear_instruction <key>\n"
+            f"Ключи: {', '.join(sorted(INSTRUCTION_FILE_KEYS))}\n"
+            "Удаляет загруженный файл; в меню снова будет кнопка со ссылкой."
+        )
+        return
+    key = context.args[0].lower()
+    if key not in INSTRUCTION_FILE_KEYS:
+        await update.message.reply_text(
+            f"Неизвестный ключ. Допустимо: {', '.join(sorted(INSTRUCTION_FILE_KEYS))}"
+        )
+        return
+    if delete_instruction_file(key):
+        await update.message.reply_text(
+            f"✅ Файл для `{key}` удалён. Снова показывается ссылка (ключи `url_setup_*`, `url_reinstall`, `url_renew`).",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text("❌ Не удалось удалить запись.")
+
+
+async def cmd_resetcontent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin_user(update.effective_user.id):
+        await update.message.reply_text("Нет доступа.")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: /resetcontent <key>\n"
+            "Удаляет сохранённое значение из БД; подставится дефолт из кода (см. /listcontent)."
+        )
+        return
+    key = context.args[0]
+    if reset_content_key(key):
+        await update.message.reply_text(f"✅ Ключ `{key}` сброшен к значению по умолчанию.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("❌ Ошибка.")
 
 
 async def cmd_addadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1505,6 +1580,8 @@ def main():
         application.add_handler(CommandHandler("setcontent", cmd_setcontent))
         application.add_handler(CommandHandler("seturl", cmd_seturl))
         application.add_handler(CommandHandler("upload_instruction", cmd_upload_instruction))
+        application.add_handler(CommandHandler("clear_instruction", cmd_clear_instruction))
+        application.add_handler(CommandHandler("resetcontent", cmd_resetcontent))
         application.add_handler(CommandHandler("addadmin", cmd_addadmin))
         application.add_handler(CommandHandler("removeadmin", cmd_removeadmin))
         application.add_handler(CommandHandler("listadmins", cmd_listadmins))
