@@ -1,0 +1,11 @@
+telegram_bot_env
+.venv
+venv
+__pycache__
+*.pyc
+.git
+.env
+data
+*.db
+*.log
+.DS_Store
